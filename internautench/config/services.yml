@@ -1,0 +1,10 @@
+services:
+  _defaults:
+    public: true
+
+  internautench.locale_data_source_decorator:
+    class: InternautenChSwissLocaleDataSourceDecorator
+    file: '%kernel.project_dir%/modules/internautench/classes/InternautenChSwissLocaleDataSourceDecorator.php'
+    decorates: prestashop.core.localization.cldr.datalayer.locale_cache
+    arguments:
+      - '@internautench.locale_data_source_decorator.inner'

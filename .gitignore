@@ -1,0 +1,25 @@
+dist/
+*.zip
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# PHP / tests
+.phpunit.result.cache
+coverage/
+
+# JavaScript tooling
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local temp / logs
+*.log
+tmp/
+temp/
+
+# Dependency helpers
+composer.phar

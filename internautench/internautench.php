@@ -17,8 +17,8 @@ class Internautench extends Module
     {
         $this->name = 'internautench';
         $this->tab = 'administration';
-        $this->version = '1.1.0';
-        $this->author = 'Internauten';
+        $this->version = '1.1.1';
+        $this->author = 'Die.Internauten.CH GmbH';
         $this->need_instance = 0;
         $this->bootstrap = true;
         $this->ps_versions_compliancy = [

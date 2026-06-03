@@ -3,26 +3,38 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEFAULT_MODULE="internautench"
-MODULE_NAME="${1:-$DEFAULT_MODULE}"
-MODULE_DIR="$ROOT_DIR/$MODULE_NAME"
 OUTPUT_DIR="$ROOT_DIR/dist"
-OUTPUT_FILE="$OUTPUT_DIR/${MODULE_NAME}.zip"
 
-if [[ ! -d "$MODULE_DIR" ]]; then
-  echo "Modulverzeichnis nicht gefunden: $MODULE_DIR" >&2
-  exit 1
+DEFAULT_MODULES=(
+  "internautench"
+  "internautenrecaptcha"
+)
+
+if [[ $# -gt 0 ]]; then
+  MODULES_TO_BUILD=("$@")
+else
+  MODULES_TO_BUILD=("${DEFAULT_MODULES[@]}")
 fi
 
 mkdir -p "$OUTPUT_DIR"
-rm -f "$OUTPUT_FILE"
 
-if command -v zip >/dev/null 2>&1; then
-  pushd "$ROOT_DIR" >/dev/null
-  zip -rq "$OUTPUT_FILE" "$MODULE_NAME"
-  popd >/dev/null
-elif command -v python3 >/dev/null 2>&1; then
-  MODULE_DIR="$MODULE_DIR" OUTPUT_FILE="$OUTPUT_FILE" python3 - <<'PY'
+for MODULE_NAME in "${MODULES_TO_BUILD[@]}"; do
+  MODULE_DIR="$ROOT_DIR/$MODULE_NAME"
+  OUTPUT_FILE="$OUTPUT_DIR/${MODULE_NAME}.zip"
+
+  if [[ ! -d "$MODULE_DIR" ]]; then
+    echo "Modulverzeichnis nicht gefunden: $MODULE_DIR" >&2
+    exit 1
+  fi
+
+  rm -f "$OUTPUT_FILE"
+
+  if command -v zip >/dev/null 2>&1; then
+    pushd "$ROOT_DIR" >/dev/null
+    zip -rq "$OUTPUT_FILE" "$MODULE_NAME"
+    popd >/dev/null
+  elif command -v python3 >/dev/null 2>&1; then
+    MODULE_DIR="$MODULE_DIR" OUTPUT_FILE="$OUTPUT_FILE" python3 - <<'PY'
 import os
 import zipfile
 
@@ -38,9 +50,12 @@ with zipfile.ZipFile(output_file, "w", compression=zipfile.ZIP_DEFLATED) as arch
             archive_name = os.path.relpath(file_path, root_dir)
             archive.write(file_path, archive_name)
 PY
-else
-  echo "Weder 'zip' noch 'python3' ist installiert. Kein ZIP kann erstellt werden." >&2
-  exit 1
-fi
+  else
+    echo "Weder 'zip' noch 'python3' ist installiert. Kein ZIP kann erstellt werden." >&2
+    exit 1
+  fi
 
-echo "ZIP erstellt: $OUTPUT_FILE"
+  echo "ZIP erstellt: $OUTPUT_FILE"
+done
+
+echo "Alle angeforderten Module wurden als ZIP erstellt."

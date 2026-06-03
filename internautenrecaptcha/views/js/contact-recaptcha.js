@@ -2,7 +2,26 @@
     var widgetId = null;
 
     function getContactForm() {
-        return document.querySelector('form.contact-form') || document.querySelector('form[action*="contact"]');
+        var form = document.querySelector('form.contact-form')
+            || document.querySelector('form#contact-form')
+            || document.querySelector('form[action*="contact-us"]')
+            || document.querySelector('form[action*="contact"]');
+
+        if (form) {
+            return form;
+        }
+
+        var submitField = document.querySelector('form [name="submitMessage"]');
+        if (submitField && submitField.form) {
+            return submitField.form;
+        }
+
+        var messageField = document.querySelector('form textarea[name="message"]');
+        if (messageField && messageField.form) {
+            return messageField.form;
+        }
+
+        return null;
     }
 
     function addErrorAlert(form) {
@@ -47,18 +66,21 @@
             });
         }
 
-        form.addEventListener('submit', function (event) {
-            if (widgetId === null) {
-                event.preventDefault();
-                return;
-            }
+        if (!form.dataset.internautenRecaptchaSubmitBound) {
+            form.addEventListener('submit', function (event) {
+                if (widgetId === null) {
+                    event.preventDefault();
+                    return;
+                }
 
-            var token = window.grecaptcha.getResponse(widgetId);
-            if (!token) {
-                event.preventDefault();
-                addErrorAlert(form);
-            }
-        });
+                var token = window.grecaptcha.getResponse(widgetId);
+                if (!token) {
+                    event.preventDefault();
+                    addErrorAlert(form);
+                }
+            });
+            form.dataset.internautenRecaptchaSubmitBound = '1';
+        }
 
         addErrorAlert(form);
     }

@@ -12,7 +12,7 @@ class InternautenRecaptcha extends Module
     {
         $this->name = 'internautenrecaptcha';
         $this->tab = 'front_office_features';
-        $this->version = '1.0.0';
+        $this->version = '1.0.1';
         $this->author = 'die.internauten.ch GmbH';
         $this->need_instance = 0;
         $this->bootstrap = true;
@@ -112,14 +112,15 @@ class InternautenRecaptcha extends Module
 
     public function hookDisplayHeader()
     {
-        if (!$this->isContactRequest()) {
+        if (!$this->isConfigured()) {
             return;
         }
 
-        $siteKey = (string) Configuration::get(self::CONF_SITE_KEY);
-        if ($siteKey === '') {
-            return;
-        }
+        $this->context->controller->registerJavascript(
+            'module-' . $this->name . '-contact',
+            'modules/' . $this->name . '/views/js/contact-recaptcha.js',
+            array('position' => 'bottom', 'priority' => 190)
+        );
 
         $this->context->controller->registerJavascript(
             'module-' . $this->name . '-recaptcha-api',
@@ -127,14 +128,8 @@ class InternautenRecaptcha extends Module
             array('server' => 'remote', 'position' => 'bottom', 'priority' => 200)
         );
 
-        $this->context->controller->registerJavascript(
-            'module-' . $this->name . '-contact',
-            'modules/' . $this->name . '/views/js/contact-recaptcha.js',
-            array('position' => 'bottom', 'priority' => 210)
-        );
-
         Media::addJsDef(array(
-            'internautenRecaptchaSiteKey' => $siteKey,
+            'internautenRecaptchaSiteKey' => (string) Configuration::get(self::CONF_SITE_KEY),
             'internautenRecaptchaErrorMessage' => $this->l('Please confirm that you are not a robot.'),
         ));
     }
@@ -166,18 +161,36 @@ class InternautenRecaptcha extends Module
     protected function isContactRequest()
     {
         $controller = (string) Tools::getValue('controller');
-        if ($controller === 'contact') {
+        if ($controller === 'contact' || $controller === 'contact-us') {
             return true;
         }
 
         $fc = (string) Tools::getValue('fc');
         $module = (string) Tools::getValue('module');
-        if ($fc === 'module' && $module === 'contactform' && $controller === 'contact') {
+        if ($fc === 'module' && $module === 'contactform') {
             return true;
         }
 
+        if (isset($this->context->controller) && isset($this->context->controller->page_name)) {
+            $pageName = (string) $this->context->controller->page_name;
+            if ($pageName === 'contact' || $pageName === 'contact-us') {
+                return true;
+            }
+        }
+
         if (isset($this->context->controller) && isset($this->context->controller->php_self)) {
-            return $this->context->controller->php_self === 'contact';
+            $phpSelf = (string) $this->context->controller->php_self;
+            if ($phpSelf === 'contact' || $phpSelf === 'contact-us') {
+                return true;
+            }
+        }
+
+        $requestUri = (string) Tools::getValue('request_uri', '');
+        if ($requestUri === '' && isset($_SERVER['REQUEST_URI'])) {
+            $requestUri = (string) $_SERVER['REQUEST_URI'];
+        }
+        if ($requestUri !== '' && strpos($requestUri, 'contact') !== false) {
+            return true;
         }
 
         return false;

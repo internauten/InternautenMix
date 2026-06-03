@@ -1,5 +1,5 @@
 (function () {
-    var widgetId = null;
+    var widgetSequence = 0;
 
     function getContactForm() {
         var form = document.querySelector('form.contact-form')
@@ -24,6 +24,95 @@
         return null;
     }
 
+    function getNewsletterTargets() {
+        var targets = [];
+        var slots = document.querySelectorAll('.internauten-recaptcha-slot[data-internauten-recaptcha="newsletter"]');
+
+        Array.prototype.forEach.call(slots, function (slot) {
+            var form = slot.closest ? slot.closest('form') : null;
+            if (!form) {
+                return;
+            }
+
+            targets.push({
+                form: form,
+                container: slot,
+            });
+        });
+
+        if (targets.length > 0) {
+            return targets;
+        }
+
+        var fallbackForms = document.querySelectorAll('.block_newsletter form, form input[name="submitNewsletter"]');
+        Array.prototype.forEach.call(fallbackForms, function (entry) {
+            var form = entry.tagName === 'FORM' ? entry : entry.form;
+            if (!form) {
+                return;
+            }
+
+            targets.push({
+                form: form,
+                container: null,
+            });
+        });
+
+        return targets;
+    }
+
+    function buildTargets() {
+        var targets = [];
+        var contactForm = getContactForm();
+
+        if (contactForm) {
+            targets.push({
+                form: contactForm,
+                container: contactForm.querySelector('#internauten-contact-recaptcha'),
+            });
+        }
+
+        Array.prototype.forEach.call(getNewsletterTargets(), function (target) {
+            var alreadyAdded = targets.some(function (existingTarget) {
+                return existingTarget.form === target.form;
+            });
+
+            if (!alreadyAdded) {
+                targets.push(target);
+            }
+        });
+
+        return targets;
+    }
+
+    function ensureContainer(target) {
+        if (target.container && target.container.parentNode) {
+            return target.container;
+        }
+
+        var container = document.createElement('div');
+        container.className = 'internauten-recaptcha-slot';
+        container.style.margin = '12px 0';
+
+        var submitButton = target.form.querySelector('button[type="submit"], input[type="submit"]');
+        if (submitButton && submitButton.parentNode) {
+            submitButton.parentNode.insertBefore(container, submitButton);
+        } else {
+            target.form.appendChild(container);
+        }
+
+        target.container = container;
+
+        return container;
+    }
+
+    function getWidgetId(form) {
+        if (!form.dataset.internautenRecaptchaWidgetId) {
+            return null;
+        }
+
+        return parseInt(form.dataset.internautenRecaptchaWidgetId, 10);
+    }
+
     function addErrorAlert(form) {
         var url = new URL(window.location.href);
         if (url.searchParams.get('recaptcha_error') !== '1') {
@@ -40,49 +129,50 @@
         form.insertBefore(alert, form.firstChild);
     }
 
-    function mountRecaptcha() {
-        var form = getContactForm();
-        if (!form || !window.internautenRecaptchaSiteKey || !window.grecaptcha) {
+    function bindSubmitHandler(form) {
+        if (form.dataset.internautenRecaptchaSubmitBound) {
             return;
         }
 
-        var existing = form.querySelector('#internauten-contact-recaptcha');
-        var container = existing || document.createElement('div');
-        container.id = 'internauten-contact-recaptcha';
-        container.style.margin = '12px 0';
-
-        if (!existing) {
-            var submitButton = form.querySelector('button[type="submit"], input[type="submit"]');
-            if (submitButton && submitButton.parentNode) {
-                submitButton.parentNode.insertBefore(container, submitButton);
-            } else {
-                form.appendChild(container);
+        form.addEventListener('submit', function (event) {
+            var widgetId = getWidgetId(form);
+            if (widgetId === null || isNaN(widgetId)) {
+                event.preventDefault();
+                addErrorAlert(form);
+                return;
             }
+
+            var token = window.grecaptcha.getResponse(widgetId);
+            if (!token) {
+                event.preventDefault();
+                addErrorAlert(form);
+            }
+        });
+        form.dataset.internautenRecaptchaSubmitBound = '1';
+    }
+
+    function mountRecaptcha() {
+        if (!window.internautenRecaptchaSiteKey || !window.grecaptcha) {
+            return;
         }
 
-        if (widgetId === null) {
-            widgetId = window.grecaptcha.render(container, {
-                sitekey: window.internautenRecaptchaSiteKey,
-            });
-        }
+        Array.prototype.forEach.call(buildTargets(), function (target) {
+            var container = ensureContainer(target);
 
-        if (!form.dataset.internautenRecaptchaSubmitBound) {
-            form.addEventListener('submit', function (event) {
-                if (widgetId === null) {
-                    event.preventDefault();
-                    return;
-                }
+            if (!container.id) {
+                widgetSequence += 1;
+                container.id = 'internauten-recaptcha-' + widgetSequence;
+            }
 
-                var token = window.grecaptcha.getResponse(widgetId);
-                if (!token) {
-                    event.preventDefault();
-                    addErrorAlert(form);
-                }
-            });
-            form.dataset.internautenRecaptchaSubmitBound = '1';
-        }
+            if (getWidgetId(target.form) === null) {
+                target.form.dataset.internautenRecaptchaWidgetId = String(window.grecaptcha.render(container, {
+                    sitekey: window.internautenRecaptchaSiteKey,
+                }));
+            }
 
-        addErrorAlert(form);
+            bindSubmitHandler(target.form);
+            addErrorAlert(target.form);
+        });
     }
 
     window.internautenRecaptchaOnload = mountRecaptcha;

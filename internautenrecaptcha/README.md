@@ -1,6 +1,6 @@
 # Internauten reCAPTCHA Module
 
-Dieses PrestaShop-Modul schuetzt das Kontaktformular mit Google reCAPTCHA.
+Dieses PrestaShop-Modul schuetzt das Kontaktformular und die Newsletter-Anmeldung mit Google reCAPTCHA.
 
 ## Modulname
 
@@ -41,11 +41,18 @@ Nicht passend fuer dieses Modul:
 2. `Site key` eintragen.
 3. `Secret key` eintragen.
 4. Speichern.
-5. PrestaShop-Cache leeren.
+5. Die Vorschau im Backoffice pruefen.
+6. Wenn dort `Invalid key type` erscheint, wurde nicht der richtige Schluesseltyp verwendet.
+7. Auf den Secret-key-Hinweis im Backoffice achten.
+8. Wenn dort ein Fehler erscheint, passen `Site key` und `Secret key` nicht zusammen oder der Secret key ist ungueltig.
+9. PrestaShop-Cache leeren.
 
 ## Funktionsweise
 
 - Das Modul laedt die Google reCAPTCHA API auf der Kontaktseite.
+- Das Modul schuetzt auch die Newsletter-Anmeldung des Moduls `ps_emailsubscription`.
+- Im Backoffice wird der gespeicherte `Site key` direkt als Vorschau geladen.
+- Im Backoffice wird der gespeicherte `Secret key` serverseitig gegen Google reCAPTCHA geprueft.
 - Vor dem Absenden muss der reCAPTCHA-Check erfolgreich sein.
 - Serverseitig wird das Token bei Google validiert.
 - Bei Fehlern wird auf die Kontaktseite mit Meldung zurueckgeleitet.
@@ -54,6 +61,8 @@ Nicht passend fuer dieses Modul:
 
 1. Kontaktformular ohne reCAPTCHA absenden -> sollte blockiert werden.
 2. Kontaktformular mit geloestem reCAPTCHA absenden -> sollte erfolgreich gesendet werden.
+3. Newsletter-Anmeldung ohne reCAPTCHA absenden -> sollte blockiert werden.
+4. Newsletter-Anmeldung mit geloestem reCAPTCHA absenden -> sollte erfolgreich sein.
 
 ## Fehlerbehebung
 

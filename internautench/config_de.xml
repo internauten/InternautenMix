@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<module>
+    <name>internautench</name>
+    <displayName><![CDATA[Internauten CH Number Format]]></displayName>
+    <version><![CDATA[1.1.1]]></version>
+    <description><![CDATA[Formats numbers and prices for Swiss locales with apostrophe grouping and a dot as decimal separator.]]></description>
+    <author><![CDATA[Die.Internauten.CH GmbH]]></author>
+    <tab><![CDATA[administration]]></tab>
+    <is_configurable>1</is_configurable>
+    <need_instance>0</need_instance>
+</module>

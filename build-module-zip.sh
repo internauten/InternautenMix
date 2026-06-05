@@ -8,6 +8,7 @@ OUTPUT_DIR="$ROOT_DIR/dist"
 DEFAULT_MODULES=(
   "internautench"
   "internautenrecaptcha"
+  "internautengraph"
 )
 
 if [[ $# -gt 0 ]]; then

@@ -5,6 +5,7 @@ Sammlung von PrestaShop-Modulen und Hilfsskripten fuer Entwicklung, Test und Pak
 ## Inhalte
 
 - [internautench](/home/dmo/internauten/InternautenMix/internautench): PrestaShop-Modul fuer Schweizer Zahlen- und Preisformatierung mit konfigurierbaren Locales.
+- [internautengraph](/home/dmo/internauten/InternautenMix/internautengraph): PrestaShop-Modul, das den E-Mail-Versand via Microsoft Graph API (Office 365) ermoeglicht.
 - [build-module-zip.sh](/home/dmo/internauten/InternautenMix/build-module-zip.sh): Erstellt aus einem Modulordner ein installierbares ZIP-Archiv.
 - [dist](/home/dmo/internauten/InternautenMix/dist): Zielverzeichnis fuer erzeugte ZIP-Dateien.
 

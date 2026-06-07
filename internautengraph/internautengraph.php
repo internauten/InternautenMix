@@ -33,12 +33,13 @@ class InternautenGraph extends Module
         parent::__construct();
 
         $this->displayName = $this->l('Internauten Graph Mail');
-        $this->description = $this->l('Overrides PrestaShop mail sending and uses Microsoft Graph API for Office 365.');
+        $this->description = $this->l('Routes PrestaShop mail sending through Microsoft Graph API for Office 365.');
     }
 
     public function install()
     {
-        return parent::install()
+        $installed = parent::install()
+            && $this->registerHook('actionEmailSendBefore')
             && Configuration::updateValue(self::CONF_ENABLED, 0)
             && Configuration::updateValue(self::CONF_TENANT_ID, '')
             && Configuration::updateValue(self::CONF_CLIENT_ID, '')
@@ -46,33 +47,37 @@ class InternautenGraph extends Module
             && Configuration::updateValue(self::CONF_SENDER_MAILBOX, '')
             && Configuration::updateValue(self::CONF_TEST_RECIPIENT, '')
             && Configuration::updateValue(self::CONF_LAST_ERROR, '')
-            && Configuration::updateValue(self::CONF_DEBUG_TEMPLATE_VARS, 0)
-            && $this->installOverrides();
+            && Configuration::updateValue(self::CONF_DEBUG_TEMPLATE_VARS, 0);
+
+        if (!$installed) {
+            return false;
+        }
+
+        // Migration path: remove old override installations from previous module versions.
+        $manualOverrideRemoved = $this->removeInstalledMailOverrideIfOwnedByModule();
+        if ($manualOverrideRemoved) {
+            $this->refreshClassIndexCache();
+            $this->logLifecycleInfo('install: removed legacy Mail override and refreshed class index/cache.');
+        }
+
+        return true;
     }
 
     public function uninstall()
     {
-        $overridesRemoved = $this->uninstallOverrides();
-        $this->logUninstallInfo(
-            $overridesRemoved
-                ? 'uninstallOverrides removed module overrides successfully.'
-                : 'uninstallOverrides returned false; trying manual override cleanup.'
-        );
-
         $manualOverrideRemoved = $this->removeInstalledMailOverrideIfOwnedByModule();
-        $this->logUninstallInfo(
+        $this->logLifecycleInfo(
             $manualOverrideRemoved
                 ? 'Manual cleanup removed override/classes/Mail.php owned by module.'
                 : 'Manual cleanup did not remove override/classes/Mail.php (file missing or not owned by module).'
         );
 
-        if ($overridesRemoved || $manualOverrideRemoved) {
+        if ($manualOverrideRemoved) {
             $this->refreshClassIndexCache();
-            $this->logUninstallInfo('Class index/cache refreshed after override cleanup.');
+            $this->logLifecycleInfo('Class index/cache refreshed after override cleanup.');
         }
 
-        return $overridesRemoved
-            && Configuration::deleteByName(self::CONF_ENABLED)
+        return Configuration::deleteByName(self::CONF_ENABLED)
             && Configuration::deleteByName(self::CONF_TENANT_ID)
             && Configuration::deleteByName(self::CONF_CLIENT_ID)
             && Configuration::deleteByName(self::CONF_CLIENT_SECRET)
@@ -81,6 +86,45 @@ class InternautenGraph extends Module
             && Configuration::deleteByName(self::CONF_LAST_ERROR)
             && Configuration::deleteByName(self::CONF_DEBUG_TEMPLATE_VARS)
             && parent::uninstall();
+    }
+
+    public function hookActionEmailSendBefore($params)
+    {
+        if (!is_array($params)) {
+            return true;
+        }
+
+        if (!self::shouldUseGraph()) {
+            return true;
+        }
+
+        $sentWithGraph = InternautenGraphMailer::send(
+            isset($params['idLang']) ? $params['idLang'] : 0,
+            isset($params['template']) ? $params['template'] : '',
+            isset($params['subject']) ? $params['subject'] : '',
+            isset($params['templateVars']) && is_array($params['templateVars']) ? $params['templateVars'] : array(),
+            isset($params['to']) ? $params['to'] : '',
+            isset($params['toName']) ? $params['toName'] : null,
+            isset($params['from']) ? $params['from'] : null,
+            isset($params['fromName']) ? $params['fromName'] : null,
+            isset($params['fileAttachment']) ? $params['fileAttachment'] : null,
+            isset($params['templatePath']) ? $params['templatePath'] : _PS_MAIL_DIR_,
+            isset($params['idShop']) ? $params['idShop'] : null,
+            isset($params['bcc']) ? $params['bcc'] : null,
+            isset($params['replyTo']) ? $params['replyTo'] : null,
+            isset($params['replyToName']) ? $params['replyToName'] : null
+        );
+
+        if ($sentWithGraph) {
+            $this->logLifecycleInfo('hook: email sent with Graph, native Mail::Send skipped.');
+
+            // Returning false tells Mail::Send to stop and not send natively.
+            return false;
+        }
+
+        $this->logLifecycleInfo('hook: Graph send failed, native Mail::Send continues as fallback.');
+
+        return true;
     }
 
     private function removeInstalledMailOverrideIfOwnedByModule()
@@ -123,13 +167,13 @@ class InternautenGraph extends Module
         }
     }
 
-    private function logUninstallInfo($message)
+    private function logLifecycleInfo($message)
     {
         if (!class_exists('PrestaShopLogger')) {
             return;
         }
 
-        PrestaShopLogger::addLog('internautengraph uninstall: ' . (string) $message, 1);
+        PrestaShopLogger::addLog('internautengraph: ' . (string) $message, 1);
     }
 
     public function getContent()

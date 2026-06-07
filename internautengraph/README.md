@@ -4,7 +4,7 @@ PrestaShop-Modul, das den Versand von `Mail::Send()` auf Microsoft Graph API (Of
 
 ## Features
 
-- Installiert ein Override fuer die PrestaShop-Klasse `Mail`.
+- Nutzt den Hook `actionEmailSendBefore`, um den nativen Versand vor dem Senden abzufangen.
 - Versendet E-Mails ueber Microsoft Graph `sendMail`.
 - Liest die PrestaShop-Mailtemplates (`.html` / `.txt`) und ersetzt Template-Variablen.
 - Fallback auf den nativen PrestaShop-Mailversand, falls Graph fehlschlaegt.
@@ -75,6 +75,7 @@ PrestaShop-Modul, das den Versand von `Mail::Send()` auf Microsoft Graph API (Of
 ## Hinweise
 
 - Das Modul verwendet den OAuth2 Client-Credentials-Flow.
+- Der Versand wird ueber den Hook `actionEmailSendBefore` umgeleitet (kein aktiver Klassen-Override erforderlich).
 - Bei aktivierter Graph-Konfiguration wird zuerst Graph versucht.
 - Falls Graph nicht verfuegbar ist oder eine Anfrage fehlschlaegt, wird auf den Standardversand von PrestaShop zurueckgefallen.
 - In der Modulkonfiguration gibt es ein eigenes Feld `Test recipient email` mit Button `Send test email`, um den Graph-Versand direkt zu pruefen.

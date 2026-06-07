@@ -1,11 +1,11 @@
 # internautengraph
 
-PrestaShop-Modul, das den Versand von `Mail::Send()` auf Microsoft Graph API (Office 365) umleitet.
+PrestaShop-Modul, das den Versand von `Mail::Send()` auf einen externen Versanddienst umleitet.
 
 ## Features
 
 - Nutzt den Hook `actionEmailSendBefore`, um den nativen Versand vor dem Senden abzufangen.
-- Versendet E-Mails ueber Microsoft Graph `sendMail`.
+- Versendet E-Mails ueber Microsoft Graph `sendMail` oder SMTP mit STARTTLS.
 - Liest die PrestaShop-Mailtemplates (`.html` / `.txt`) und ersetzt Template-Variablen.
 - Fallback auf den nativen PrestaShop-Mailversand, falls Graph fehlschlaegt.
 
@@ -13,12 +13,20 @@ PrestaShop-Modul, das den Versand von `Mail::Send()` auf Microsoft Graph API (Of
 
 1. Modulordner `internautengraph` nach `modules/` kopieren.
 2. Modul im Back Office installieren.
-3. In der Modulkonfiguration folgende Werte setzen:
-   - Tenant ID
-   - Client ID
-   - Client Secret
-   - Sender mailbox (Office 365 Benutzer)
-4. Modul aktivieren und eine erste Testmail aus PrestaShop ausloesen.
+3. In der Modulkonfiguration den Versanddienst (`Mail transport`) waehlen.
+4. Je nach Versanddienst die passenden Werte setzen:
+   - Microsoft Graph API:
+     - Tenant ID
+     - Client ID
+     - Client Secret
+     - Sender mailbox (Office 365 Benutzer)
+   - SMTP with STARTTLS:
+     - SMTP host
+     - SMTP port (typisch 587)
+     - SMTP username
+     - SMTP password
+     - SMTP sender email (optional zusaetzlich SMTP sender name)
+5. Modul aktivieren und eine erste Testmail aus PrestaShop ausloesen.
 
 ## Azure und Office 365 Schritt fuer Schritt
 
@@ -74,12 +82,13 @@ PrestaShop-Modul, das den Versand von `Mail::Send()` auf Microsoft Graph API (Of
 
 ## Hinweise
 
-- Das Modul verwendet den OAuth2 Client-Credentials-Flow.
+- Das Modul unterstuetzt zwei Transportmodi: `Microsoft Graph API` und `SMTP with STARTTLS`.
+- Fuer Graph verwendet das Modul den OAuth2 Client-Credentials-Flow.
 - Der Versand wird ueber den Hook `actionEmailSendBefore` umgeleitet (kein aktiver Klassen-Override erforderlich).
-- Bei aktivierter Graph-Konfiguration wird zuerst Graph versucht.
-- Falls Graph nicht verfuegbar ist oder eine Anfrage fehlschlaegt, wird auf den Standardversand von PrestaShop zurueckgefallen.
-- In der Modulkonfiguration gibt es ein eigenes Feld `Test recipient email` mit Button `Send test email`, um den Graph-Versand direkt zu pruefen.
-- Bei Graph-Fehlern werden HTTP-Status und API-Fehlerdetails im Modul-Backend angezeigt (`Last Microsoft Graph error`).
+- Bei aktivierter Transport-Konfiguration wird zuerst der gewaehlte Transport versucht.
+- Falls der gewaehlte Transport nicht verfuegbar ist oder eine Anfrage fehlschlaegt, wird auf den Standardversand von PrestaShop zurueckgefallen.
+- In der Modulkonfiguration gibt es ein eigenes Feld `Test recipient email` mit Button `Send test email`, um den aktuell gewaehlten Transport direkt zu pruefen.
+- Bei Transport-Fehlern werden Details im Modul-Backend angezeigt (`Last custom transport error`).
 - Optionaler Schalter `Debug template variables`: schreibt bei Bedarf Variable-Keys und nicht ersetzte Platzhalter in die PrestaShop-Logs (zum Troubleshooting, standardmaessig aus).
 - Debug-Logs enthalten eine Request-ID (`rid=...`), damit zusammengehoerige Eintraege pro Versandversuch leicht gefiltert werden koennen.
 

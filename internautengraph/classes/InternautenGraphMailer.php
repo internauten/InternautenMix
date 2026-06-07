@@ -91,24 +91,19 @@ class InternautenGraphMailer
             require_once _PS_MODULE_DIR_ . 'internautengraph/internautengraph.php';
         }
 
-        if (!InternautenGraph::shouldUseGraph()) {
-            self::setLastError('Graph sending is disabled or incomplete configuration values are missing.');
+        if (!InternautenGraph::shouldInterceptMailSending()) {
+            self::setLastError('Custom mail transport is disabled or incomplete configuration values are missing.');
             return false;
         }
 
-        $config = InternautenGraph::getGraphConfig();
-        $accessToken = self::requestAccessToken($config);
-        if ($accessToken === null) {
-            return false;
-        }
-
+        $transportMode = InternautenGraph::getMailTransportMode();
         $message = array(
-            'subject' => 'Internauten Graph Test Email',
+            'subject' => 'Internauten Transport Test Email',
             'body' => array(
                 'contentType' => 'HTML',
                 'content' => '<p>This is a test email sent by the PrestaShop module <strong>internautengraph</strong>.</p>'
                     . '<p>Timestamp: ' . date('Y-m-d H:i:s') . ' UTC</p>'
-                    . '<p>Sender mailbox: ' . htmlspecialchars($config['sender_mailbox'], ENT_QUOTES, 'UTF-8') . '</p>',
+                    . '<p>Transport: ' . htmlspecialchars((string) $transportMode, ENT_QUOTES, 'UTF-8') . '</p>',
             ),
             'toRecipients' => self::formatRecipients(array(
                 array(
@@ -118,7 +113,13 @@ class InternautenGraphMailer
             )),
         );
 
-        return self::sendMailRequest($config['sender_mailbox'], $accessToken, $message);
+        if ($transportMode === 'smtp_starttls') {
+            $smtpConfig = InternautenGraph::getSmtpConfig();
+            return self::sendSmtpRequest($smtpConfig, $message, null, null);
+        }
+
+        $graphConfig = InternautenGraph::getGraphConfig();
+        return self::sendGraphRequest($graphConfig, $message);
     }
 
     public static function send(
@@ -144,10 +145,12 @@ class InternautenGraphMailer
             require_once _PS_MODULE_DIR_ . 'internautengraph/internautengraph.php';
         }
 
-        if (!InternautenGraph::shouldUseGraph()) {
-            self::setLastError('Graph sending is disabled or incomplete configuration values are missing.');
+        if (!InternautenGraph::shouldInterceptMailSending()) {
+            self::setLastError('Custom mail transport is disabled or incomplete configuration values are missing.');
             return false;
         }
+
+        $transportMode = InternautenGraph::getMailTransportMode();
 
         if (class_exists('Hook')) {
             Hook::exec(
@@ -157,12 +160,6 @@ class InternautenGraphMailer
                     'template_vars' => &$templateVars,
                 )
             );
-        }
-
-        $config = InternautenGraph::getGraphConfig();
-        $accessToken = self::requestAccessToken($config);
-        if ($accessToken === null) {
-            return false;
         }
 
         $message = self::buildMessage(
@@ -183,11 +180,17 @@ class InternautenGraphMailer
         );
 
         if ($message === null) {
-            self::setLastError('Graph message could not be built because no valid recipient was provided.');
+            self::setLastError('Message could not be built because no valid recipient was provided.');
             return false;
         }
 
-        return self::sendMailRequest($config['sender_mailbox'], $accessToken, $message);
+        if ($transportMode === 'smtp_starttls') {
+            $smtpConfig = InternautenGraph::getSmtpConfig();
+            return self::sendSmtpRequest($smtpConfig, $message, $from, $fromName);
+        }
+
+        $graphConfig = InternautenGraph::getGraphConfig();
+        return self::sendGraphRequest($graphConfig, $message);
     }
 
     private static function buildMessage(
@@ -664,7 +667,17 @@ class InternautenGraphMailer
         return (string) $decoded['access_token'];
     }
 
-    private static function sendMailRequest($senderMailbox, $accessToken, array $message)
+    private static function sendGraphRequest(array $config, array $message)
+    {
+        $accessToken = self::requestAccessToken($config);
+        if ($accessToken === null) {
+            return false;
+        }
+
+        return self::sendGraphMailRequest($config['sender_mailbox'], $accessToken, $message);
+    }
+
+    private static function sendGraphMailRequest($senderMailbox, $accessToken, array $message)
     {
         $url = 'https://graph.microsoft.com/v1.0/users/' . rawurlencode($senderMailbox) . '/sendMail';
 
@@ -696,6 +709,288 @@ class InternautenGraphMailer
         self::clearLastError();
 
         return true;
+    }
+
+    private static function sendSmtpRequest(array $smtpConfig, array $message, $fallbackFromEmail, $fallbackFromName)
+    {
+        $host = isset($smtpConfig['host']) ? trim((string) $smtpConfig['host']) : '';
+        $port = isset($smtpConfig['port']) ? (int) $smtpConfig['port'] : 587;
+        $username = isset($smtpConfig['username']) ? (string) $smtpConfig['username'] : '';
+        $password = isset($smtpConfig['password']) ? (string) $smtpConfig['password'] : '';
+        $senderEmail = isset($smtpConfig['sender_email']) ? trim((string) $smtpConfig['sender_email']) : '';
+        $senderName = isset($smtpConfig['sender_name']) ? trim((string) $smtpConfig['sender_name']) : '';
+
+        if ($host === '' || $port <= 0 || $username === '' || $password === '' || $senderEmail === '') {
+            self::setLastError('SMTP STARTTLS configuration is incomplete.');
+            return false;
+        }
+
+        if (!Validate::isEmail($senderEmail)) {
+            self::setLastError('SMTP sender email is invalid.');
+            return false;
+        }
+
+        $fromEmail = $senderEmail;
+        $fromName = $senderName;
+        if ($fromEmail === '' && is_string($fallbackFromEmail) && trim($fallbackFromEmail) !== '') {
+            $fromEmail = trim($fallbackFromEmail);
+        }
+        if ($fromName === '' && is_string($fallbackFromName) && trim($fallbackFromName) !== '') {
+            $fromName = trim($fallbackFromName);
+        }
+
+        $toRecipients = self::extractRecipientAddresses($message, 'toRecipients');
+        $bccRecipients = self::extractRecipientAddresses($message, 'bccRecipients');
+        $allRecipients = array_merge($toRecipients, $bccRecipients);
+        if (empty($allRecipients)) {
+            self::setLastError('SMTP message has no recipients.');
+            return false;
+        }
+
+        $subject = isset($message['subject']) ? (string) $message['subject'] : '';
+        $bodyType = isset($message['body']['contentType']) ? strtoupper((string) $message['body']['contentType']) : 'TEXT';
+        $bodyContent = isset($message['body']['content']) ? (string) $message['body']['content'] : '';
+        $replyTo = self::extractReplyTo($message);
+        $attachments = isset($message['attachments']) && is_array($message['attachments']) ? $message['attachments'] : array();
+
+        $smtpMessage = self::buildSmtpMessage(
+            $fromEmail,
+            $fromName,
+            $toRecipients,
+            $subject,
+            $bodyType,
+            $bodyContent,
+            $replyTo,
+            $attachments
+        );
+
+        $remote = 'tcp://' . $host . ':' . $port;
+        $errno = 0;
+        $errstr = '';
+        $socket = @stream_socket_client($remote, $errno, $errstr, 20);
+        if (!is_resource($socket)) {
+            self::setLastError('SMTP connection failed: ' . trim($errstr . ' (' . $errno . ')'));
+            return false;
+        }
+
+        stream_set_timeout($socket, 20);
+
+        try {
+            self::smtpReadResponse($socket, array(220));
+            self::smtpSendCommand($socket, 'EHLO internautengraph.local', array(250));
+            self::smtpSendCommand($socket, 'STARTTLS', array(220));
+
+            $cryptoEnabled = @stream_socket_enable_crypto($socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT);
+            if ($cryptoEnabled !== true) {
+                throw new Exception('SMTP STARTTLS handshake failed.');
+            }
+
+            self::smtpSendCommand($socket, 'EHLO internautengraph.local', array(250));
+            self::smtpSendCommand($socket, 'AUTH LOGIN', array(334));
+            self::smtpSendCommand($socket, base64_encode($username), array(334));
+            self::smtpSendCommand($socket, base64_encode($password), array(235));
+
+            self::smtpSendCommand($socket, 'MAIL FROM:<' . $fromEmail . '>', array(250));
+            foreach ($allRecipients as $recipient) {
+                self::smtpSendCommand($socket, 'RCPT TO:<' . $recipient['address'] . '>', array(250, 251));
+            }
+
+            self::smtpSendCommand($socket, 'DATA', array(354));
+            fwrite($socket, self::dotStuff($smtpMessage) . "\r\n.\r\n");
+            self::smtpReadResponse($socket, array(250));
+            self::smtpSendCommand($socket, 'QUIT', array(221));
+        } catch (Exception $e) {
+            fclose($socket);
+            self::setLastError('SMTP send failed: ' . $e->getMessage());
+            return false;
+        }
+
+        fclose($socket);
+        self::clearLastError();
+
+        return true;
+    }
+
+    private static function buildSmtpMessage($fromEmail, $fromName, array $toRecipients, $subject, $bodyType, $bodyContent, array $replyTo, array $attachments)
+    {
+        $headers = array();
+        $headers[] = 'Date: ' . date('r');
+        $headers[] = 'MIME-Version: 1.0';
+        $headers[] = 'From: ' . self::formatSmtpAddress($fromEmail, $fromName);
+        $headers[] = 'To: ' . self::formatSmtpAddressList($toRecipients);
+        $headers[] = 'Subject: ' . self::encodeMimeHeader((string) $subject);
+
+        if (!empty($replyTo) && isset($replyTo['address']) && $replyTo['address'] !== '') {
+            $headers[] = 'Reply-To: ' . self::formatSmtpAddress($replyTo['address'], isset($replyTo['name']) ? $replyTo['name'] : '');
+        }
+
+        $isHtml = $bodyType === 'HTML';
+        $contentType = $isHtml ? 'text/html; charset=UTF-8' : 'text/plain; charset=UTF-8';
+
+        if (empty($attachments)) {
+            $headers[] = 'Content-Type: ' . $contentType;
+            $headers[] = 'Content-Transfer-Encoding: base64';
+
+            return implode("\r\n", $headers) . "\r\n\r\n" . chunk_split(base64_encode((string) $bodyContent), 76, "\r\n");
+        }
+
+        $boundary = 'mix_' . md5(uniqid((string) mt_rand(), true));
+        $headers[] = 'Content-Type: multipart/mixed; boundary="' . $boundary . '"';
+
+        $parts = array();
+        $parts[] = '--' . $boundary;
+        $parts[] = 'Content-Type: ' . $contentType;
+        $parts[] = 'Content-Transfer-Encoding: base64';
+        $parts[] = '';
+        $parts[] = chunk_split(base64_encode((string) $bodyContent), 76, "\r\n");
+
+        foreach ($attachments as $attachment) {
+            $name = isset($attachment['name']) ? (string) $attachment['name'] : 'attachment.bin';
+            $mime = isset($attachment['contentType']) ? (string) $attachment['contentType'] : 'application/octet-stream';
+            $contentBytes = isset($attachment['contentBytes']) ? (string) $attachment['contentBytes'] : '';
+            if ($contentBytes === '' || $name === '') {
+                continue;
+            }
+
+            $parts[] = '--' . $boundary;
+            $parts[] = 'Content-Type: ' . $mime . '; name="' . addslashes($name) . '"';
+            $parts[] = 'Content-Disposition: attachment; filename="' . addslashes($name) . '"';
+            $parts[] = 'Content-Transfer-Encoding: base64';
+            $parts[] = '';
+            $parts[] = chunk_split($contentBytes, 76, "\r\n");
+        }
+
+        $parts[] = '--' . $boundary . '--';
+
+        return implode("\r\n", $headers) . "\r\n\r\n" . implode("\r\n", $parts);
+    }
+
+    private static function extractRecipientAddresses(array $message, $key)
+    {
+        $result = array();
+        if (!isset($message[$key]) || !is_array($message[$key])) {
+            return $result;
+        }
+
+        foreach ($message[$key] as $recipient) {
+            if (!isset($recipient['emailAddress']) || !is_array($recipient['emailAddress'])) {
+                continue;
+            }
+
+            $address = isset($recipient['emailAddress']['address']) ? trim((string) $recipient['emailAddress']['address']) : '';
+            if ($address === '') {
+                continue;
+            }
+
+            $result[] = array(
+                'address' => $address,
+                'name' => isset($recipient['emailAddress']['name']) ? (string) $recipient['emailAddress']['name'] : '',
+            );
+        }
+
+        return $result;
+    }
+
+    private static function extractReplyTo(array $message)
+    {
+        if (!isset($message['replyTo']) || !is_array($message['replyTo']) || empty($message['replyTo'])) {
+            return array();
+        }
+
+        $first = reset($message['replyTo']);
+        if (!is_array($first) || !isset($first['emailAddress']) || !is_array($first['emailAddress'])) {
+            return array();
+        }
+
+        $address = isset($first['emailAddress']['address']) ? trim((string) $first['emailAddress']['address']) : '';
+        if ($address === '') {
+            return array();
+        }
+
+        return array(
+            'address' => $address,
+            'name' => isset($first['emailAddress']['name']) ? (string) $first['emailAddress']['name'] : '',
+        );
+    }
+
+    private static function formatSmtpAddressList(array $recipients)
+    {
+        $formatted = array();
+        foreach ($recipients as $recipient) {
+            if (!isset($recipient['address'])) {
+                continue;
+            }
+            $formatted[] = self::formatSmtpAddress($recipient['address'], isset($recipient['name']) ? $recipient['name'] : '');
+        }
+
+        return implode(', ', $formatted);
+    }
+
+    private static function formatSmtpAddress($email, $name)
+    {
+        $email = trim((string) $email);
+        $name = trim((string) $name);
+        if ($name === '') {
+            return '<' . $email . '>';
+        }
+
+        return self::encodeMimeHeader($name) . ' <' . $email . '>';
+    }
+
+    private static function encodeMimeHeader($value)
+    {
+        $value = (string) $value;
+        if ($value === '') {
+            return '';
+        }
+
+        if (preg_match('/^[\x20-\x7E]*$/', $value)) {
+            return $value;
+        }
+
+        return '=?UTF-8?B?' . base64_encode($value) . '?=';
+    }
+
+    private static function smtpSendCommand($socket, $command, array $expectedCodes)
+    {
+        fwrite($socket, $command . "\r\n");
+        self::smtpReadResponse($socket, $expectedCodes);
+    }
+
+    private static function smtpReadResponse($socket, array $expectedCodes)
+    {
+        $response = '';
+        $code = 0;
+
+        while (($line = fgets($socket, 515)) !== false) {
+            $response .= $line;
+            if (preg_match('/^(\d{3})([\s-])/', $line, $matches)) {
+                $code = (int) $matches[1];
+                if ($matches[2] === ' ') {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        if (!in_array($code, $expectedCodes, true)) {
+            throw new Exception('Unexpected SMTP response ' . $code . ': ' . trim($response));
+        }
+    }
+
+    private static function dotStuff($data)
+    {
+        $normalized = str_replace(array("\r\n", "\r"), "\n", (string) $data);
+        $lines = explode("\n", $normalized);
+
+        foreach ($lines as &$line) {
+            if (isset($line[0]) && $line[0] === '.') {
+                $line = '.' . $line;
+            }
+        }
+
+        return implode("\r\n", $lines);
     }
 
     private static function httpRequest($url, $method, array $headers, $body)

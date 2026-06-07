@@ -8,11 +8,21 @@ require_once __DIR__ . '/classes/InternautenGraphMailer.php';
 
 class InternautenGraph extends Module
 {
+    const TRANSPORT_GRAPH = 'graph';
+    const TRANSPORT_SMTP_STARTTLS = 'smtp_starttls';
+
     const CONF_ENABLED = 'INTERNAUTENGRAPH_ENABLED';
+    const CONF_TRANSPORT_MODE = 'INTERNAUTENGRAPH_TRANSPORT_MODE';
     const CONF_TENANT_ID = 'INTERNAUTENGRAPH_TENANT_ID';
     const CONF_CLIENT_ID = 'INTERNAUTENGRAPH_CLIENT_ID';
     const CONF_CLIENT_SECRET = 'INTERNAUTENGRAPH_CLIENT_SECRET';
     const CONF_SENDER_MAILBOX = 'INTERNAUTENGRAPH_SENDER_MAILBOX';
+    const CONF_SMTP_HOST = 'INTERNAUTENGRAPH_SMTP_HOST';
+    const CONF_SMTP_PORT = 'INTERNAUTENGRAPH_SMTP_PORT';
+    const CONF_SMTP_USERNAME = 'INTERNAUTENGRAPH_SMTP_USERNAME';
+    const CONF_SMTP_PASSWORD = 'INTERNAUTENGRAPH_SMTP_PASSWORD';
+    const CONF_SMTP_SENDER_EMAIL = 'INTERNAUTENGRAPH_SMTP_SENDER_EMAIL';
+    const CONF_SMTP_SENDER_NAME = 'INTERNAUTENGRAPH_SMTP_SENDER_NAME';
     const CONF_TEST_RECIPIENT = 'INTERNAUTENGRAPH_TEST_RECIPIENT';
     const CONF_LAST_ERROR = 'INTERNAUTENGRAPH_LAST_ERROR';
     const CONF_DEBUG_TEMPLATE_VARS = 'INTERNAUTENGRAPH_DEBUG_TEMPLATE_VARS';
@@ -33,7 +43,7 @@ class InternautenGraph extends Module
         parent::__construct();
 
         $this->displayName = $this->l('Internauten Graph Mail');
-        $this->description = $this->l('Routes PrestaShop mail sending through Microsoft Graph API for Office 365.');
+        $this->description = $this->l('Routes PrestaShop mail sending through Microsoft Graph API or SMTP STARTTLS.');
     }
 
     public function install()
@@ -41,10 +51,17 @@ class InternautenGraph extends Module
         $installed = parent::install()
             && $this->registerHook('actionEmailSendBefore')
             && Configuration::updateValue(self::CONF_ENABLED, 0)
+            && Configuration::updateValue(self::CONF_TRANSPORT_MODE, self::TRANSPORT_GRAPH)
             && Configuration::updateValue(self::CONF_TENANT_ID, '')
             && Configuration::updateValue(self::CONF_CLIENT_ID, '')
             && Configuration::updateValue(self::CONF_CLIENT_SECRET, '')
             && Configuration::updateValue(self::CONF_SENDER_MAILBOX, '')
+            && Configuration::updateValue(self::CONF_SMTP_HOST, '')
+            && Configuration::updateValue(self::CONF_SMTP_PORT, 587)
+            && Configuration::updateValue(self::CONF_SMTP_USERNAME, '')
+            && Configuration::updateValue(self::CONF_SMTP_PASSWORD, '')
+            && Configuration::updateValue(self::CONF_SMTP_SENDER_EMAIL, '')
+            && Configuration::updateValue(self::CONF_SMTP_SENDER_NAME, '')
             && Configuration::updateValue(self::CONF_TEST_RECIPIENT, '')
             && Configuration::updateValue(self::CONF_LAST_ERROR, '')
             && Configuration::updateValue(self::CONF_DEBUG_TEMPLATE_VARS, 0);
@@ -78,10 +95,17 @@ class InternautenGraph extends Module
         }
 
         return Configuration::deleteByName(self::CONF_ENABLED)
+            && Configuration::deleteByName(self::CONF_TRANSPORT_MODE)
             && Configuration::deleteByName(self::CONF_TENANT_ID)
             && Configuration::deleteByName(self::CONF_CLIENT_ID)
             && Configuration::deleteByName(self::CONF_CLIENT_SECRET)
             && Configuration::deleteByName(self::CONF_SENDER_MAILBOX)
+            && Configuration::deleteByName(self::CONF_SMTP_HOST)
+            && Configuration::deleteByName(self::CONF_SMTP_PORT)
+            && Configuration::deleteByName(self::CONF_SMTP_USERNAME)
+            && Configuration::deleteByName(self::CONF_SMTP_PASSWORD)
+            && Configuration::deleteByName(self::CONF_SMTP_SENDER_EMAIL)
+            && Configuration::deleteByName(self::CONF_SMTP_SENDER_NAME)
             && Configuration::deleteByName(self::CONF_TEST_RECIPIENT)
             && Configuration::deleteByName(self::CONF_LAST_ERROR)
             && Configuration::deleteByName(self::CONF_DEBUG_TEMPLATE_VARS)
@@ -94,7 +118,7 @@ class InternautenGraph extends Module
             return true;
         }
 
-        if (!self::shouldUseGraph()) {
+        if (!self::shouldInterceptMailSending()) {
             return true;
         }
 
@@ -116,13 +140,13 @@ class InternautenGraph extends Module
         );
 
         if ($sentWithGraph) {
-            $this->logLifecycleInfo('hook: email sent with Graph, native Mail::Send skipped.');
+            $this->logLifecycleInfo('hook: email sent with configured custom transport, native Mail::Send skipped.');
 
             // Returning false tells Mail::Send to stop and not send natively.
             return false;
         }
 
-        $this->logLifecycleInfo('hook: Graph send failed, native Mail::Send continues as fallback.');
+        $this->logLifecycleInfo('hook: custom transport send failed, native Mail::Send continues as fallback.');
 
         return true;
     }
@@ -186,15 +210,15 @@ class InternautenGraph extends Module
 
             if ($testRecipient === '' || !Validate::isEmail($testRecipient)) {
                 $output .= $this->displayError($this->l('Please enter a valid test recipient email address.'));
-            } elseif (!self::shouldUseGraph()) {
-                $output .= $this->displayError($this->l('Graph sending is not ready. Please enable Graph and complete all Office 365 fields first.'));
+            } elseif (!self::shouldInterceptMailSending()) {
+                $output .= $this->displayError($this->l('Custom mail transport is not ready. Enable the module and complete all required fields for the selected transport first.'));
             } else {
                 $sent = InternautenGraphMailer::sendTestMail($testRecipient);
                 if ($sent) {
-                    $output .= $this->displayConfirmation($this->l('Test email sent successfully using Microsoft Graph.'));
+                    $output .= $this->displayConfirmation($this->l('Test email sent successfully using the selected transport.'));
                 } else {
                     $detail = trim((string) InternautenGraphMailer::getLastError());
-                    $message = $this->l('Test email could not be sent via Microsoft Graph. Please verify app permissions and mailbox settings.');
+                    $message = $this->l('Test email could not be sent using the selected transport. Please verify your transport settings.');
                     if ($detail !== '') {
                         $message .= ' ' . $this->l('Error details:') . ' ' . $detail;
                     }
@@ -205,22 +229,50 @@ class InternautenGraph extends Module
 
         if (Tools::isSubmit('submitInternautenGraph')) {
             $enabled = (int) Tools::getValue(self::CONF_ENABLED, 0);
+            $transportMode = trim((string) Tools::getValue(self::CONF_TRANSPORT_MODE, self::TRANSPORT_GRAPH));
+            if (!in_array($transportMode, array(self::TRANSPORT_GRAPH, self::TRANSPORT_SMTP_STARTTLS), true)) {
+                $transportMode = self::TRANSPORT_GRAPH;
+            }
+
             $tenantId = trim((string) Tools::getValue(self::CONF_TENANT_ID));
             $clientId = trim((string) Tools::getValue(self::CONF_CLIENT_ID));
             $postedClientSecret = trim((string) Tools::getValue(self::CONF_CLIENT_SECRET));
             $existingClientSecret = (string) Configuration::get(self::CONF_CLIENT_SECRET);
             $clientSecret = $postedClientSecret !== '' ? $postedClientSecret : $existingClientSecret;
             $senderMailbox = trim((string) Tools::getValue(self::CONF_SENDER_MAILBOX));
+
+            $smtpHost = trim((string) Tools::getValue(self::CONF_SMTP_HOST));
+            $smtpPort = (int) Tools::getValue(self::CONF_SMTP_PORT, 587);
+            if ($smtpPort <= 0) {
+                $smtpPort = 587;
+            }
+            $smtpUsername = trim((string) Tools::getValue(self::CONF_SMTP_USERNAME));
+            $postedSmtpPassword = trim((string) Tools::getValue(self::CONF_SMTP_PASSWORD));
+            $existingSmtpPassword = (string) Configuration::get(self::CONF_SMTP_PASSWORD);
+            $smtpPassword = $postedSmtpPassword !== '' ? $postedSmtpPassword : $existingSmtpPassword;
+            $smtpSenderEmail = trim((string) Tools::getValue(self::CONF_SMTP_SENDER_EMAIL));
+            $smtpSenderName = trim((string) Tools::getValue(self::CONF_SMTP_SENDER_NAME));
             $debugTemplateVars = (int) Tools::getValue(self::CONF_DEBUG_TEMPLATE_VARS, 0);
 
-            if ($enabled && ($tenantId === '' || $clientId === '' || $clientSecret === '' || $senderMailbox === '')) {
-                $output .= $this->displayError($this->l('All Office 365 fields are required when Graph sending is enabled.'));
+            if ($enabled && $transportMode === self::TRANSPORT_GRAPH && ($tenantId === '' || $clientId === '' || $clientSecret === '' || $senderMailbox === '')) {
+                $output .= $this->displayError($this->l('All Office 365 fields are required when Graph transport is selected and enabled.'));
+            } elseif ($enabled && $transportMode === self::TRANSPORT_SMTP_STARTTLS && ($smtpHost === '' || $smtpPort <= 0 || $smtpUsername === '' || $smtpPassword === '' || $smtpSenderEmail === '')) {
+                $output .= $this->displayError($this->l('All SMTP STARTTLS fields except sender name are required when SMTP transport is selected and enabled.'));
+            } elseif ($enabled && $transportMode === self::TRANSPORT_SMTP_STARTTLS && !Validate::isEmail($smtpSenderEmail)) {
+                $output .= $this->displayError($this->l('Please provide a valid SMTP sender email address.'));
             } else {
                 Configuration::updateValue(self::CONF_ENABLED, $enabled);
+                Configuration::updateValue(self::CONF_TRANSPORT_MODE, $transportMode);
                 Configuration::updateValue(self::CONF_TENANT_ID, $tenantId);
                 Configuration::updateValue(self::CONF_CLIENT_ID, $clientId);
                 Configuration::updateValue(self::CONF_CLIENT_SECRET, $clientSecret);
                 Configuration::updateValue(self::CONF_SENDER_MAILBOX, $senderMailbox);
+                Configuration::updateValue(self::CONF_SMTP_HOST, $smtpHost);
+                Configuration::updateValue(self::CONF_SMTP_PORT, $smtpPort);
+                Configuration::updateValue(self::CONF_SMTP_USERNAME, $smtpUsername);
+                Configuration::updateValue(self::CONF_SMTP_PASSWORD, $smtpPassword);
+                Configuration::updateValue(self::CONF_SMTP_SENDER_EMAIL, $smtpSenderEmail);
+                Configuration::updateValue(self::CONF_SMTP_SENDER_NAME, $smtpSenderName);
                 Configuration::updateValue(self::CONF_DEBUG_TEMPLATE_VARS, $debugTemplateVars);
                 $output .= $this->displayConfirmation($this->l('Settings updated.'));
             }
@@ -237,13 +289,14 @@ class InternautenGraph extends Module
         }
 
         return $this->displayWarning(
-            $this->l('Last Microsoft Graph error:') . ' ' . Tools::safeOutput($lastError)
+            $this->l('Last custom transport error:') . ' ' . Tools::safeOutput($lastError)
         );
     }
 
     protected function renderForm()
     {
         $hasStoredClientSecret = trim((string) Configuration::get(self::CONF_CLIENT_SECRET)) !== '';
+        $hasStoredSmtpPassword = trim((string) Configuration::get(self::CONF_SMTP_PASSWORD)) !== '';
 
         $helper = new HelperForm();
         $helper->show_toolbar = false;
@@ -261,17 +314,24 @@ class InternautenGraph extends Module
 
         $helper->fields_value = array(
             self::CONF_ENABLED => (int) Configuration::get(self::CONF_ENABLED, 0),
+            self::CONF_TRANSPORT_MODE => (string) Configuration::get(self::CONF_TRANSPORT_MODE, self::TRANSPORT_GRAPH),
             self::CONF_TENANT_ID => (string) Configuration::get(self::CONF_TENANT_ID),
             self::CONF_CLIENT_ID => (string) Configuration::get(self::CONF_CLIENT_ID),
             self::CONF_CLIENT_SECRET => (string) Configuration::get(self::CONF_CLIENT_SECRET),
             self::CONF_SENDER_MAILBOX => (string) Configuration::get(self::CONF_SENDER_MAILBOX),
+            self::CONF_SMTP_HOST => (string) Configuration::get(self::CONF_SMTP_HOST),
+            self::CONF_SMTP_PORT => (int) Configuration::get(self::CONF_SMTP_PORT, 587),
+            self::CONF_SMTP_USERNAME => (string) Configuration::get(self::CONF_SMTP_USERNAME),
+            self::CONF_SMTP_PASSWORD => (string) Configuration::get(self::CONF_SMTP_PASSWORD),
+            self::CONF_SMTP_SENDER_EMAIL => (string) Configuration::get(self::CONF_SMTP_SENDER_EMAIL),
+            self::CONF_SMTP_SENDER_NAME => (string) Configuration::get(self::CONF_SMTP_SENDER_NAME),
             self::CONF_DEBUG_TEMPLATE_VARS => (int) Configuration::get(self::CONF_DEBUG_TEMPLATE_VARS, 0),
         );
 
         $fieldsForm = array(
             'form' => array(
                 'legend' => array(
-                    'title' => $this->l('Microsoft Graph mail settings'),
+                    'title' => $this->l('Mail transport settings'),
                     'icon' => 'icon-cogs',
                 ),
                 'input' => array(
@@ -292,6 +352,26 @@ class InternautenGraph extends Module
                                 'label' => $this->l('No'),
                             ),
                         ),
+                    ),
+                    array(
+                        'type' => 'select',
+                        'label' => $this->l('Mail transport'),
+                        'name' => self::CONF_TRANSPORT_MODE,
+                        'options' => array(
+                            'query' => array(
+                                array(
+                                    'id_option' => self::TRANSPORT_GRAPH,
+                                    'name' => $this->l('Microsoft Graph API'),
+                                ),
+                                array(
+                                    'id_option' => self::TRANSPORT_SMTP_STARTTLS,
+                                    'name' => $this->l('SMTP with STARTTLS'),
+                                ),
+                            ),
+                            'id' => 'id_option',
+                            'name' => 'name',
+                        ),
+                        'desc' => $this->l('Select which external transport should be used when this module is enabled.'),
                     ),
                     array(
                         'type' => 'text',
@@ -321,6 +401,50 @@ class InternautenGraph extends Module
                         'name' => self::CONF_SENDER_MAILBOX,
                         'required' => false,
                         'desc' => $this->l('Office 365 user mailbox used for Graph /users/{mailbox}/sendMail, for example shop@example.com'),
+                    ),
+                    array(
+                        'type' => 'text',
+                        'label' => $this->l('SMTP host'),
+                        'name' => self::CONF_SMTP_HOST,
+                        'required' => false,
+                        'desc' => $this->l('SMTP server host for STARTTLS, for example smtp.office365.com.'),
+                    ),
+                    array(
+                        'type' => 'text',
+                        'label' => $this->l('SMTP port'),
+                        'name' => self::CONF_SMTP_PORT,
+                        'required' => false,
+                        'desc' => $this->l('SMTP port for STARTTLS, usually 587.'),
+                    ),
+                    array(
+                        'type' => 'text',
+                        'label' => $this->l('SMTP username'),
+                        'name' => self::CONF_SMTP_USERNAME,
+                        'required' => false,
+                    ),
+                    array(
+                        'type' => 'password',
+                        'label' => $this->l('SMTP password'),
+                        'name' => self::CONF_SMTP_PASSWORD,
+                        'required' => false,
+                        'autocomplete' => 'off',
+                        'desc' => $hasStoredSmtpPassword
+                            ? $this->l('An SMTP password is already stored. Leave empty to keep it unchanged.')
+                            : $this->l('No SMTP password is stored yet. Enter a value to enable SMTP transport.'),
+                    ),
+                    array(
+                        'type' => 'text',
+                        'label' => $this->l('SMTP sender email'),
+                        'name' => self::CONF_SMTP_SENDER_EMAIL,
+                        'required' => false,
+                        'desc' => $this->l('Envelope and From address used for SMTP sending, for example shop@example.com.'),
+                    ),
+                    array(
+                        'type' => 'text',
+                        'label' => $this->l('SMTP sender name'),
+                        'name' => self::CONF_SMTP_SENDER_NAME,
+                        'required' => false,
+                        'desc' => $this->l('Optional display name for SMTP sender.'),
                     ),
                     array(
                         'type' => 'switch',
@@ -363,7 +487,7 @@ class InternautenGraph extends Module
         return '
             <div class="panel">
                 <h3><i class="icon-envelope"></i> ' . $this->l('Send test email') . '</h3>
-                <p>' . $this->l('Use this form to validate your Microsoft Graph configuration directly from the module settings.') . '</p>
+                <p>' . $this->l('Use this form to validate the currently selected transport directly from the module settings.') . '</p>
                 <form method="post" action="' . $action . '">
                     <div class="form-group">
                         <label class="control-label" for="internautengraph_test_recipient">' . $this->l('Test recipient email') . '</label>
@@ -376,7 +500,7 @@ class InternautenGraph extends Module
             </div>';
     }
 
-    public static function shouldUseGraph()
+    public static function shouldInterceptMailSending()
     {
         if (!Module::isInstalled('internautengraph')) {
             return false;
@@ -386,12 +510,53 @@ class InternautenGraph extends Module
             return false;
         }
 
+        $transportMode = self::getMailTransportMode();
+        if ($transportMode === self::TRANSPORT_SMTP_STARTTLS) {
+            return self::isSmtpConfigured();
+        }
+
+        return self::isGraphConfigured();
+    }
+
+    public static function shouldUseGraph()
+    {
+        return self::shouldInterceptMailSending() && self::getMailTransportMode() === self::TRANSPORT_GRAPH;
+    }
+
+    public static function shouldUseSmtpStartTls()
+    {
+        return self::shouldInterceptMailSending() && self::getMailTransportMode() === self::TRANSPORT_SMTP_STARTTLS;
+    }
+
+    public static function getMailTransportMode()
+    {
+        $mode = trim((string) Configuration::get(self::CONF_TRANSPORT_MODE, self::TRANSPORT_GRAPH));
+        if (!in_array($mode, array(self::TRANSPORT_GRAPH, self::TRANSPORT_SMTP_STARTTLS), true)) {
+            return self::TRANSPORT_GRAPH;
+        }
+
+        return $mode;
+    }
+
+    private static function isGraphConfigured()
+    {
         $config = self::getGraphConfig();
 
         return $config['tenant_id'] !== ''
             && $config['client_id'] !== ''
             && $config['client_secret'] !== ''
             && $config['sender_mailbox'] !== '';
+    }
+
+    private static function isSmtpConfigured()
+    {
+        $config = self::getSmtpConfig();
+
+        return $config['host'] !== ''
+            && (int) $config['port'] > 0
+            && $config['username'] !== ''
+            && $config['password'] !== ''
+            && $config['sender_email'] !== '';
     }
 
     public static function getGraphConfig()
@@ -401,6 +566,18 @@ class InternautenGraph extends Module
             'client_id' => trim((string) Configuration::get(self::CONF_CLIENT_ID)),
             'client_secret' => (string) Configuration::get(self::CONF_CLIENT_SECRET),
             'sender_mailbox' => trim((string) Configuration::get(self::CONF_SENDER_MAILBOX)),
+        );
+    }
+
+    public static function getSmtpConfig()
+    {
+        return array(
+            'host' => trim((string) Configuration::get(self::CONF_SMTP_HOST)),
+            'port' => (int) Configuration::get(self::CONF_SMTP_PORT, 587),
+            'username' => trim((string) Configuration::get(self::CONF_SMTP_USERNAME)),
+            'password' => (string) Configuration::get(self::CONF_SMTP_PASSWORD),
+            'sender_email' => trim((string) Configuration::get(self::CONF_SMTP_SENDER_EMAIL)),
+            'sender_name' => trim((string) Configuration::get(self::CONF_SMTP_SENDER_NAME)),
         );
     }
 

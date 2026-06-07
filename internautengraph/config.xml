@@ -3,7 +3,7 @@
     <name>internautengraph</name>
     <displayName><![CDATA[Internauten Graph Mail]]></displayName>
     <version><![CDATA[1.0.0]]></version>
-    <description><![CDATA[Sends PrestaShop emails through Microsoft Graph API for Office 365.]]></description>
+    <description><![CDATA[Sends PrestaShop emails through Microsoft Graph API or SMTP STARTTLS.]]></description>
     <author><![CDATA[die.internauten.ch GmbH]]></author>
     <tab><![CDATA[administration]]></tab>
     <is_configurable>1</is_configurable>

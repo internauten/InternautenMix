@@ -79,6 +79,8 @@ PrestaShop-Modul, das den Versand von `Mail::Send()` auf Microsoft Graph API (Of
 - Falls Graph nicht verfuegbar ist oder eine Anfrage fehlschlaegt, wird auf den Standardversand von PrestaShop zurueckgefallen.
 - In der Modulkonfiguration gibt es ein eigenes Feld `Test recipient email` mit Button `Send test email`, um den Graph-Versand direkt zu pruefen.
 - Bei Graph-Fehlern werden HTTP-Status und API-Fehlerdetails im Modul-Backend angezeigt (`Last Microsoft Graph error`).
+- Optionaler Schalter `Debug template variables`: schreibt bei Bedarf Variable-Keys und nicht ersetzte Platzhalter in die PrestaShop-Logs (zum Troubleshooting, standardmaessig aus).
+- Debug-Logs enthalten eine Request-ID (`rid=...`), damit zusammengehoerige Eintraege pro Versandversuch leicht gefiltert werden koennen.
 
 ## Test mit Docker
 

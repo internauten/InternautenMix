@@ -3,6 +3,28 @@
 class InternautenGraphMailer
 {
     private static $lastError = '';
+    private static $currentRequestId = '';
+
+    private static function startRequestContext($template = '')
+    {
+        if (function_exists('random_bytes')) {
+            self::$currentRequestId = bin2hex(random_bytes(6));
+        } else {
+            self::$currentRequestId = substr(sha1(uniqid((string) mt_rand(), true)), 0, 12);
+        }
+
+        if (self::isTemplateDebugEnabled() && class_exists('PrestaShopLogger')) {
+            PrestaShopLogger::addLog(
+                'internautengraph debug [rid=' . self::$currentRequestId . ']: begin send for template=' . (string) $template,
+                1
+            );
+        }
+    }
+
+    private static function getRequestId()
+    {
+        return self::$currentRequestId !== '' ? self::$currentRequestId : 'n/a';
+    }
 
     public static function getLastError()
     {
@@ -26,7 +48,10 @@ class InternautenGraphMailer
         }
 
         if (class_exists('PrestaShopLogger') && self::$lastError !== '') {
-            PrestaShopLogger::addLog('internautengraph: ' . self::$lastError, 3);
+            PrestaShopLogger::addLog(
+                'internautengraph [rid=' . self::getRequestId() . ']: ' . self::$lastError,
+                3
+            );
         }
     }
 
@@ -59,6 +84,7 @@ class InternautenGraphMailer
 
     public static function sendTestMail($toEmail, $toName = '')
     {
+        self::startRequestContext('test_mail');
         self::clearLastError();
 
         if (!class_exists('InternautenGraph')) {
@@ -106,10 +132,12 @@ class InternautenGraphMailer
         $fromName,
         $fileAttachment,
         $templatePath,
+        $idShop,
         $bcc,
         $replyTo,
         $replyToName
     ) {
+        self::startRequestContext((string) $template);
         self::clearLastError();
 
         if (!class_exists('InternautenGraph')) {
@@ -119,6 +147,16 @@ class InternautenGraphMailer
         if (!InternautenGraph::shouldUseGraph()) {
             self::setLastError('Graph sending is disabled or incomplete configuration values are missing.');
             return false;
+        }
+
+        if (class_exists('Hook')) {
+            Hook::exec(
+                'sendMailAlterTemplateVars',
+                array(
+                    'template' => $template,
+                    'template_vars' => &$templateVars,
+                )
+            );
         }
 
         $config = InternautenGraph::getGraphConfig();
@@ -138,6 +176,7 @@ class InternautenGraphMailer
             $fromName,
             $fileAttachment,
             (string) $templatePath,
+            $idShop,
             $bcc,
             $replyTo,
             $replyToName
@@ -162,6 +201,7 @@ class InternautenGraphMailer
         $fromName,
         $fileAttachment,
         $templatePath,
+        $idShop,
         $bcc,
         $replyTo,
         $replyToName
@@ -171,7 +211,7 @@ class InternautenGraphMailer
             return null;
         }
 
-        $rendered = self::renderTemplate($templatePath, $template, $idLang, $templateVars);
+        $rendered = self::renderTemplate($templatePath, $template, $idLang, $templateVars, $idShop);
 
         $bodyType = 'HTML';
         $bodyContent = $rendered['html'];
@@ -227,8 +267,10 @@ class InternautenGraphMailer
         return $message;
     }
 
-    private static function renderTemplate($templatePath, $template, $idLang, array $templateVars)
+    private static function renderTemplate($templatePath, $template, $idLang, array $templateVars, $idShop)
     {
+        $normalizedTemplateVars = self::normalizeTemplateVars($templateVars, $template, $idLang, $idShop);
+
         $iso = Language::getIsoById((int) $idLang);
         if (!is_string($iso) || $iso === '') {
             $iso = 'en';
@@ -242,19 +284,247 @@ class InternautenGraphMailer
         $html = '';
         if (is_file($htmlPath) && is_readable($htmlPath)) {
             $html = (string) Tools::file_get_contents($htmlPath);
-            $html = strtr($html, $templateVars);
+            $html = strtr($html, $normalizedTemplateVars);
         }
 
         $text = '';
         if (is_file($textPath) && is_readable($textPath)) {
             $text = (string) Tools::file_get_contents($textPath);
-            $text = strtr($text, $templateVars);
+            $text = strtr($text, $normalizedTemplateVars);
         }
+
+        self::logTemplateDebug((string) $template, (int) $idLang, $normalizedTemplateVars, $html, $text);
 
         return array(
             'html' => $html,
             'text' => $text,
         );
+    }
+
+    private static function isTemplateDebugEnabled()
+    {
+        if (!class_exists('InternautenGraph')) {
+            $moduleClass = _PS_MODULE_DIR_ . 'internautengraph/internautengraph.php';
+            if (is_file($moduleClass)) {
+                require_once $moduleClass;
+            }
+        }
+
+        return class_exists('InternautenGraph') && InternautenGraph::isTemplateVarDebugEnabled();
+    }
+
+    private static function logTemplateDebug($template, $idLang, array $normalizedTemplateVars, $html, $text)
+    {
+        if (!self::isTemplateDebugEnabled() || !class_exists('PrestaShopLogger')) {
+            return;
+        }
+
+        $keys = array_keys($normalizedTemplateVars);
+        sort($keys);
+
+        $unresolved = array();
+        $contentToCheck = (string) $html . "\n" . (string) $text;
+        if ($contentToCheck !== '') {
+            if (preg_match_all('/\{[a-zA-Z0-9_\-\.]+\}/', $contentToCheck, $matches)) {
+                $unresolved = array_values(array_unique($matches[0]));
+                sort($unresolved);
+            }
+        }
+
+        $summary = sprintf(
+            'internautengraph debug [rid=%s]: template=%s, idLang=%d, vars=%d, unresolved=%d',
+            self::getRequestId(),
+            (string) $template,
+            (int) $idLang,
+            count($keys),
+            count($unresolved)
+        );
+        PrestaShopLogger::addLog($summary, 1);
+
+        $keysLog = 'internautengraph debug [rid=' . self::getRequestId() . '] keys: ' . implode(', ', $keys);
+        PrestaShopLogger::addLog($keysLog, 1);
+
+        if (!empty($unresolved)) {
+            $unresolvedLog = 'internautengraph debug [rid=' . self::getRequestId() . '] unresolved placeholders: ' . implode(', ', $unresolved);
+            PrestaShopLogger::addLog($unresolvedLog, 2);
+        }
+    }
+
+    private static function normalizeTemplateVars(array $templateVars, $template, $idLang, $idShop)
+    {
+        $normalized = array();
+
+        foreach ($templateVars as $key => $value) {
+            if (!is_scalar($value) && $value !== null) {
+                continue;
+            }
+
+            $valueString = (string) $value;
+            $keyString = is_string($key) ? trim($key) : '';
+
+            if ($keyString === '') {
+                continue;
+            }
+
+            $normalized[$keyString] = $valueString;
+
+            if (preg_match('/^\{.+\}$/', $keyString)) {
+                $withoutBraces = trim($keyString, '{}');
+                if ($withoutBraces !== '') {
+                    $normalized[$withoutBraces] = $valueString;
+                }
+            } else {
+                $normalized['{' . $keyString . '}'] = $valueString;
+            }
+        }
+
+        $idShop = (int) $idShop;
+        if ($idShop <= 0 && class_exists('Context')) {
+            $context = Context::getContext();
+            if (isset($context->shop) && isset($context->shop->id)) {
+                $idShop = (int) $context->shop->id;
+            }
+        }
+
+        if (class_exists('Context') && !(Context::getContext()->link instanceof Link)) {
+            Context::getContext()->link = new Link();
+        }
+
+        $configuration = array(
+            'PS_SHOP_NAME' => '',
+            'PS_MAIL_COLOR' => '',
+            'PS_LOGO_MAIL' => '',
+            'PS_LOGO' => '',
+        );
+
+        if (class_exists('Configuration')) {
+            $loaded = Configuration::getMultiple(
+                array('PS_SHOP_NAME', 'PS_MAIL_COLOR', 'PS_LOGO_MAIL', 'PS_LOGO'),
+                null,
+                null,
+                $idShop > 0 ? $idShop : null
+            );
+            if (is_array($loaded)) {
+                $configuration = array_merge($configuration, $loaded);
+            }
+        }
+
+        $shopName = trim((string) $configuration['PS_SHOP_NAME']);
+        if ($shopName === '' && class_exists('Context')) {
+            $context = Context::getContext();
+            if (isset($context->shop) && isset($context->shop->name)) {
+                $shopName = trim((string) $context->shop->name);
+            }
+        }
+
+        if ($shopName !== '') {
+            if (!isset($normalized['{shop_name}'])) {
+                $normalized['{shop_name}'] = $shopName;
+            }
+            if (!isset($normalized['shop_name'])) {
+                $normalized['shop_name'] = $shopName;
+            }
+        }
+
+        if (class_exists('Context') && Context::getContext()->link instanceof Link) {
+            $link = Context::getContext()->link;
+
+            if (!isset($normalized['{shop_url}'])) {
+                $normalized['{shop_url}'] = $link->getPageLink('index', null, (int) $idLang, null, false, $idShop > 0 ? $idShop : null);
+            }
+            if (!isset($normalized['{my_account_url}'])) {
+                $normalized['{my_account_url}'] = $link->getPageLink('my-account', null, (int) $idLang, null, false, $idShop > 0 ? $idShop : null);
+            }
+            if (!isset($normalized['{guest_tracking_url}'])) {
+                $normalized['{guest_tracking_url}'] = $link->getPageLink('guest-tracking', null, (int) $idLang, null, false, $idShop > 0 ? $idShop : null);
+            }
+            if (!isset($normalized['{history_url}'])) {
+                $normalized['{history_url}'] = $link->getPageLink('history', null, (int) $idLang, null, false, $idShop > 0 ? $idShop : null);
+            }
+
+            if (!isset($normalized['{shop_logo}'])) {
+                $logoPath = '';
+                $logoMail = (string) $configuration['PS_LOGO_MAIL'];
+                $logoDefault = (string) $configuration['PS_LOGO'];
+
+                if ($logoMail !== '' && defined('_PS_IMG_DIR_') && is_file(_PS_IMG_DIR_ . $logoMail)) {
+                    $logoPath = $logoMail;
+                } elseif ($logoDefault !== '' && defined('_PS_IMG_DIR_') && is_file(_PS_IMG_DIR_ . $logoDefault)) {
+                    $logoPath = $logoDefault;
+                }
+
+                if ($logoPath !== '') {
+                    $baseLink = rtrim((string) $link->getBaseLink(null, true), '/') . '/';
+                    $normalized['{shop_logo}'] = $baseLink . 'img/' . ltrim($logoPath, '/');
+                } else {
+                    $normalized['{shop_logo}'] = '';
+                }
+            }
+        }
+
+        if (!isset($normalized['{color}'])) {
+            $normalized['{color}'] = Tools::safeOutput((string) $configuration['PS_MAIL_COLOR']);
+        }
+
+        if (class_exists('Hook')) {
+            $extraTemplateVars = array();
+            Hook::exec(
+                'actionGetExtraMailTemplateVars',
+                array(
+                    'template' => $template,
+                    'template_vars' => $normalized,
+                    'extra_template_vars' => &$extraTemplateVars,
+                    'id_lang' => (int) $idLang,
+                ),
+                null,
+                true
+            );
+
+            if (is_array($extraTemplateVars) && !empty($extraTemplateVars)) {
+                foreach ($extraTemplateVars as $key => $value) {
+                    if (!is_scalar($value) && $value !== null) {
+                        continue;
+                    }
+                    $keyString = is_string($key) ? trim($key) : '';
+                    if ($keyString === '') {
+                        continue;
+                    }
+
+                    $valueString = (string) $value;
+                    $normalized[$keyString] = $valueString;
+
+                    if (preg_match('/^\{.+\}$/', $keyString)) {
+                        $withoutBraces = trim($keyString, '{}');
+                        if ($withoutBraces !== '') {
+                            $normalized[$withoutBraces] = $valueString;
+                        }
+                    } else {
+                        $normalized['{' . $keyString . '}'] = $valueString;
+                    }
+                }
+            }
+        }
+
+        // Keep both notations because some modules inject keys without braces.
+        foreach ($normalized as $key => $value) {
+            if (!is_string($key)) {
+                continue;
+            }
+
+            if (preg_match('/^\{.+\}$/', $key)) {
+                $withoutBraces = trim($key, '{}');
+                if ($withoutBraces !== '' && !isset($normalized[$withoutBraces])) {
+                    $normalized[$withoutBraces] = $value;
+                }
+            } else {
+                $withBraces = '{' . $key . '}';
+                if (!isset($normalized[$withBraces])) {
+                    $normalized[$withBraces] = $value;
+                }
+            }
+        }
+
+        return $normalized;
     }
 
     private static function normalizeRecipients($emails, $names)

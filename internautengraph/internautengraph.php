@@ -15,6 +15,7 @@ class InternautenGraph extends Module
     const CONF_SENDER_MAILBOX = 'INTERNAUTENGRAPH_SENDER_MAILBOX';
     const CONF_TEST_RECIPIENT = 'INTERNAUTENGRAPH_TEST_RECIPIENT';
     const CONF_LAST_ERROR = 'INTERNAUTENGRAPH_LAST_ERROR';
+    const CONF_DEBUG_TEMPLATE_VARS = 'INTERNAUTENGRAPH_DEBUG_TEMPLATE_VARS';
 
     public function __construct()
     {
@@ -45,12 +46,32 @@ class InternautenGraph extends Module
             && Configuration::updateValue(self::CONF_SENDER_MAILBOX, '')
             && Configuration::updateValue(self::CONF_TEST_RECIPIENT, '')
             && Configuration::updateValue(self::CONF_LAST_ERROR, '')
+            && Configuration::updateValue(self::CONF_DEBUG_TEMPLATE_VARS, 0)
             && $this->installOverrides();
     }
 
     public function uninstall()
     {
-        return $this->uninstallOverrides()
+        $overridesRemoved = $this->uninstallOverrides();
+        $this->logUninstallInfo(
+            $overridesRemoved
+                ? 'uninstallOverrides removed module overrides successfully.'
+                : 'uninstallOverrides returned false; trying manual override cleanup.'
+        );
+
+        $manualOverrideRemoved = $this->removeInstalledMailOverrideIfOwnedByModule();
+        $this->logUninstallInfo(
+            $manualOverrideRemoved
+                ? 'Manual cleanup removed override/classes/Mail.php owned by module.'
+                : 'Manual cleanup did not remove override/classes/Mail.php (file missing or not owned by module).'
+        );
+
+        if ($overridesRemoved || $manualOverrideRemoved) {
+            $this->refreshClassIndexCache();
+            $this->logUninstallInfo('Class index/cache refreshed after override cleanup.');
+        }
+
+        return $overridesRemoved
             && Configuration::deleteByName(self::CONF_ENABLED)
             && Configuration::deleteByName(self::CONF_TENANT_ID)
             && Configuration::deleteByName(self::CONF_CLIENT_ID)
@@ -58,7 +79,57 @@ class InternautenGraph extends Module
             && Configuration::deleteByName(self::CONF_SENDER_MAILBOX)
             && Configuration::deleteByName(self::CONF_TEST_RECIPIENT)
             && Configuration::deleteByName(self::CONF_LAST_ERROR)
+            && Configuration::deleteByName(self::CONF_DEBUG_TEMPLATE_VARS)
             && parent::uninstall();
+    }
+
+    private function removeInstalledMailOverrideIfOwnedByModule()
+    {
+        if (!defined('_PS_ROOT_DIR_')) {
+            return false;
+        }
+
+        $overridePath = _PS_ROOT_DIR_ . '/override/classes/Mail.php';
+        if (!is_file($overridePath) || !is_readable($overridePath)) {
+            return false;
+        }
+
+        $content = (string) Tools::file_get_contents($overridePath);
+        if ($content === '') {
+            return false;
+        }
+
+        $isOwnedByModule = strpos($content, 'InternautenGraphMailer') !== false
+            && strpos($content, 'internautengraph') !== false;
+
+        if (!$isOwnedByModule) {
+            return false;
+        }
+
+        return @unlink($overridePath);
+    }
+
+    private function refreshClassIndexCache()
+    {
+        if (class_exists('PrestaShopAutoload') && method_exists('PrestaShopAutoload', 'getInstance')) {
+            $autoload = PrestaShopAutoload::getInstance();
+            if (is_object($autoload) && method_exists($autoload, 'generateIndex')) {
+                $autoload->generateIndex();
+            }
+        }
+
+        if (class_exists('Tools') && method_exists('Tools', 'clearSf2Cache')) {
+            Tools::clearSf2Cache();
+        }
+    }
+
+    private function logUninstallInfo($message)
+    {
+        if (!class_exists('PrestaShopLogger')) {
+            return;
+        }
+
+        PrestaShopLogger::addLog('internautengraph uninstall: ' . (string) $message, 1);
     }
 
     public function getContent()
@@ -92,8 +163,11 @@ class InternautenGraph extends Module
             $enabled = (int) Tools::getValue(self::CONF_ENABLED, 0);
             $tenantId = trim((string) Tools::getValue(self::CONF_TENANT_ID));
             $clientId = trim((string) Tools::getValue(self::CONF_CLIENT_ID));
-            $clientSecret = trim((string) Tools::getValue(self::CONF_CLIENT_SECRET));
+            $postedClientSecret = trim((string) Tools::getValue(self::CONF_CLIENT_SECRET));
+            $existingClientSecret = (string) Configuration::get(self::CONF_CLIENT_SECRET);
+            $clientSecret = $postedClientSecret !== '' ? $postedClientSecret : $existingClientSecret;
             $senderMailbox = trim((string) Tools::getValue(self::CONF_SENDER_MAILBOX));
+            $debugTemplateVars = (int) Tools::getValue(self::CONF_DEBUG_TEMPLATE_VARS, 0);
 
             if ($enabled && ($tenantId === '' || $clientId === '' || $clientSecret === '' || $senderMailbox === '')) {
                 $output .= $this->displayError($this->l('All Office 365 fields are required when Graph sending is enabled.'));
@@ -103,6 +177,7 @@ class InternautenGraph extends Module
                 Configuration::updateValue(self::CONF_CLIENT_ID, $clientId);
                 Configuration::updateValue(self::CONF_CLIENT_SECRET, $clientSecret);
                 Configuration::updateValue(self::CONF_SENDER_MAILBOX, $senderMailbox);
+                Configuration::updateValue(self::CONF_DEBUG_TEMPLATE_VARS, $debugTemplateVars);
                 $output .= $this->displayConfirmation($this->l('Settings updated.'));
             }
         }
@@ -124,6 +199,8 @@ class InternautenGraph extends Module
 
     protected function renderForm()
     {
+        $hasStoredClientSecret = trim((string) Configuration::get(self::CONF_CLIENT_SECRET)) !== '';
+
         $helper = new HelperForm();
         $helper->show_toolbar = false;
         $helper->table = $this->table;
@@ -144,6 +221,7 @@ class InternautenGraph extends Module
             self::CONF_CLIENT_ID => (string) Configuration::get(self::CONF_CLIENT_ID),
             self::CONF_CLIENT_SECRET => (string) Configuration::get(self::CONF_CLIENT_SECRET),
             self::CONF_SENDER_MAILBOX => (string) Configuration::get(self::CONF_SENDER_MAILBOX),
+            self::CONF_DEBUG_TEMPLATE_VARS => (int) Configuration::get(self::CONF_DEBUG_TEMPLATE_VARS, 0),
         );
 
         $fieldsForm = array(
@@ -189,6 +267,9 @@ class InternautenGraph extends Module
                         'name' => self::CONF_CLIENT_SECRET,
                         'required' => false,
                         'autocomplete' => 'off',
+                        'desc' => $hasStoredClientSecret
+                            ? $this->l('A client secret is already stored. Leave empty to keep it unchanged.')
+                            : $this->l('No client secret is stored yet. Enter a value to enable Graph sending.'),
                     ),
                     array(
                         'type' => 'text',
@@ -196,6 +277,25 @@ class InternautenGraph extends Module
                         'name' => self::CONF_SENDER_MAILBOX,
                         'required' => false,
                         'desc' => $this->l('Office 365 user mailbox used for Graph /users/{mailbox}/sendMail, for example shop@example.com'),
+                    ),
+                    array(
+                        'type' => 'switch',
+                        'label' => $this->l('Debug template variables'),
+                        'name' => self::CONF_DEBUG_TEMPLATE_VARS,
+                        'is_bool' => true,
+                        'desc' => $this->l('Logs Graph template variable keys and unresolved placeholders to PrestaShop logs. Disable in production unless troubleshooting.'),
+                        'values' => array(
+                            array(
+                                'id' => self::CONF_DEBUG_TEMPLATE_VARS . '_on',
+                                'value' => 1,
+                                'label' => $this->l('Yes'),
+                            ),
+                            array(
+                                'id' => self::CONF_DEBUG_TEMPLATE_VARS . '_off',
+                                'value' => 0,
+                                'label' => $this->l('No'),
+                            ),
+                        ),
                     ),
                 ),
                 'submit' => array(
@@ -258,5 +358,10 @@ class InternautenGraph extends Module
             'client_secret' => (string) Configuration::get(self::CONF_CLIENT_SECRET),
             'sender_mailbox' => trim((string) Configuration::get(self::CONF_SENDER_MAILBOX)),
         );
+    }
+
+    public static function isTemplateVarDebugEnabled()
+    {
+        return (int) Configuration::get(self::CONF_DEBUG_TEMPLATE_VARS, 0) === 1;
     }
 }

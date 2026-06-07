@@ -46,6 +46,7 @@ class Mail extends MailCore
                 $fromName,
                 $fileAttachment,
                 $templatePath,
+                $idShop,
                 $bcc,
                 $replyTo,
                 $replyToName

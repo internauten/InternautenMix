@@ -31,7 +31,7 @@ class InternautenGraph extends Module
     {
         $this->name = 'internautengraph';
         $this->tab = 'administration';
-        $this->version = '1.0.0';
+        $this->version = '2.0.1';
         $this->author = 'die.internauten.ch GmbH';
         $this->need_instance = 0;
         $this->bootstrap = true;
@@ -278,7 +278,11 @@ class InternautenGraph extends Module
             }
         }
 
-        return $output . $this->renderLastErrorPanel() . $this->renderForm() . $this->renderTestMailForm();
+        return $output
+            . $this->renderLastErrorPanel()
+            . $this->renderForm()
+            . $this->renderTransportVisibilityScript()
+            . $this->renderTestMailForm();
     }
 
     protected function renderLastErrorPanel()
@@ -331,7 +335,7 @@ class InternautenGraph extends Module
         $fieldsForm = array(
             'form' => array(
                 'legend' => array(
-                    'title' => $this->l('Mail transport settings'),
+                    'title' => $this->l('Mail transport settings (Graph / SMTP STARTTLS)'),
                     'icon' => 'icon-cogs',
                 ),
                 'input' => array(
@@ -374,20 +378,27 @@ class InternautenGraph extends Module
                         'desc' => $this->l('Select which external transport should be used when this module is enabled.'),
                     ),
                     array(
-                        'type' => 'text',
-                        'label' => $this->l('Tenant ID'),
-                        'name' => self::CONF_TENANT_ID,
-                        'required' => false,
+                        'type' => 'free',
+                        'name' => 'internautengraph_section_graph',
+                        'label' => '',
+                        'desc' => '<div class="internautengraph-section-graph"><hr><h4 style="margin:0;">' . $this->l('Microsoft Graph API settings') . '</h4></div>',
                     ),
                     array(
                         'type' => 'text',
-                        'label' => $this->l('Client ID'),
+                        'label' => $this->l('Graph - Tenant ID'),
+                        'name' => self::CONF_TENANT_ID,
+                        'required' => false,
+                        'desc' => $this->l('Microsoft Graph section: fill this field only when Mail transport is set to Microsoft Graph API.'),
+                    ),
+                    array(
+                        'type' => 'text',
+                        'label' => $this->l('Graph - Client ID'),
                         'name' => self::CONF_CLIENT_ID,
                         'required' => false,
                     ),
                     array(
                         'type' => 'password',
-                        'label' => $this->l('Client Secret'),
+                        'label' => $this->l('Graph - Client Secret'),
                         'name' => self::CONF_CLIENT_SECRET,
                         'required' => false,
                         'autocomplete' => 'off',
@@ -397,34 +408,40 @@ class InternautenGraph extends Module
                     ),
                     array(
                         'type' => 'text',
-                        'label' => $this->l('Sender mailbox'),
+                        'label' => $this->l('Graph - Sender mailbox'),
                         'name' => self::CONF_SENDER_MAILBOX,
                         'required' => false,
                         'desc' => $this->l('Office 365 user mailbox used for Graph /users/{mailbox}/sendMail, for example shop@example.com'),
                     ),
                     array(
-                        'type' => 'text',
-                        'label' => $this->l('SMTP host'),
-                        'name' => self::CONF_SMTP_HOST,
-                        'required' => false,
-                        'desc' => $this->l('SMTP server host for STARTTLS, for example smtp.office365.com.'),
+                        'type' => 'free',
+                        'name' => 'internautengraph_section_smtp',
+                        'label' => '',
+                        'desc' => '<div class="internautengraph-section-smtp"><hr><h4 style="margin:0;">' . $this->l('SMTP STARTTLS settings') . '</h4></div>',
                     ),
                     array(
                         'type' => 'text',
-                        'label' => $this->l('SMTP port'),
+                        'label' => $this->l('STARTTLS - SMTP host'),
+                        'name' => self::CONF_SMTP_HOST,
+                        'required' => false,
+                        'desc' => $this->l('SMTP STARTTLS section: fill this and the following SMTP fields only when Mail transport is set to SMTP with STARTTLS.'),
+                    ),
+                    array(
+                        'type' => 'text',
+                        'label' => $this->l('STARTTLS - SMTP port'),
                         'name' => self::CONF_SMTP_PORT,
                         'required' => false,
                         'desc' => $this->l('SMTP port for STARTTLS, usually 587.'),
                     ),
                     array(
                         'type' => 'text',
-                        'label' => $this->l('SMTP username'),
+                        'label' => $this->l('STARTTLS - SMTP username'),
                         'name' => self::CONF_SMTP_USERNAME,
                         'required' => false,
                     ),
                     array(
                         'type' => 'password',
-                        'label' => $this->l('SMTP password'),
+                        'label' => $this->l('STARTTLS - SMTP password'),
                         'name' => self::CONF_SMTP_PASSWORD,
                         'required' => false,
                         'autocomplete' => 'off',
@@ -434,14 +451,14 @@ class InternautenGraph extends Module
                     ),
                     array(
                         'type' => 'text',
-                        'label' => $this->l('SMTP sender email'),
+                        'label' => $this->l('STARTTLS - SMTP sender email'),
                         'name' => self::CONF_SMTP_SENDER_EMAIL,
                         'required' => false,
                         'desc' => $this->l('Envelope and From address used for SMTP sending, for example shop@example.com.'),
                     ),
                     array(
                         'type' => 'text',
-                        'label' => $this->l('SMTP sender name'),
+                        'label' => $this->l('STARTTLS - SMTP sender name'),
                         'name' => self::CONF_SMTP_SENDER_NAME,
                         'required' => false,
                         'desc' => $this->l('Optional display name for SMTP sender.'),
@@ -498,6 +515,92 @@ class InternautenGraph extends Module
                     </button>
                 </form>
             </div>';
+    }
+
+    protected function renderTransportVisibilityScript()
+    {
+        $transportField = self::CONF_TRANSPORT_MODE;
+
+        $graphFields = array(
+            self::CONF_TENANT_ID,
+            self::CONF_CLIENT_ID,
+            self::CONF_CLIENT_SECRET,
+            self::CONF_SENDER_MAILBOX,
+        );
+
+        $smtpFields = array(
+            self::CONF_SMTP_HOST,
+            self::CONF_SMTP_PORT,
+            self::CONF_SMTP_USERNAME,
+            self::CONF_SMTP_PASSWORD,
+            self::CONF_SMTP_SENDER_EMAIL,
+            self::CONF_SMTP_SENDER_NAME,
+        );
+
+        return '<script>
+            (function () {
+                function findRowByName(name) {
+                    var field = document.querySelector("[name=\"" + name + "\"]");
+                    if (!field) {
+                        return null;
+                    }
+
+                    var row = field.closest(".form-group");
+                    return row ? row : null;
+                }
+
+                function toggleRows(fieldNames, isVisible) {
+                    fieldNames.forEach(function (name) {
+                        var row = findRowByName(name);
+                        if (!row) {
+                            return;
+                        }
+
+                        row.style.display = isVisible ? "" : "none";
+                    });
+                }
+
+                function toggleRowsBySelector(selector, isVisible) {
+                    var nodes = document.querySelectorAll(selector);
+                    nodes.forEach(function (node) {
+                        var row = node.closest(".form-group");
+                        if (!row && node.parentElement) {
+                            row = node.parentElement;
+                        }
+                        if (!row) {
+                            return;
+                        }
+
+                        row.style.display = isVisible ? "" : "none";
+                    });
+                }
+
+                function applyTransportVisibility() {
+                    var transport = document.querySelector("[name=\"' . $transportField . '\"]");
+                    if (!transport) {
+                        return;
+                    }
+
+                    var mode = transport.value;
+                    var isGraph = mode === "graph";
+                    var isSmtp = mode === "smtp_starttls";
+
+                    toggleRows(' . json_encode($graphFields) . ', isGraph);
+                    toggleRows(' . json_encode($smtpFields) . ', isSmtp);
+                    toggleRowsBySelector(".internautengraph-section-graph", isGraph);
+                    toggleRowsBySelector(".internautengraph-section-smtp", isSmtp);
+                }
+
+                document.addEventListener("DOMContentLoaded", function () {
+                    applyTransportVisibility();
+
+                    var transport = document.querySelector("[name=\"' . $transportField . '\"]");
+                    if (transport) {
+                        transport.addEventListener("change", applyTransportVisibility);
+                    }
+                });
+            })();
+        </script>';
     }
 
     public static function shouldInterceptMailSending()

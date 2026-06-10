@@ -319,6 +319,8 @@ class InternautenGraph extends Module
         $helper->fields_value = array(
             self::CONF_ENABLED => (int) Configuration::get(self::CONF_ENABLED, 0),
             self::CONF_TRANSPORT_MODE => (string) Configuration::get(self::CONF_TRANSPORT_MODE, self::TRANSPORT_GRAPH),
+            'internautengraph_section_graph' => '',
+            'internautengraph_section_smtp' => '',
             self::CONF_TENANT_ID => (string) Configuration::get(self::CONF_TENANT_ID),
             self::CONF_CLIENT_ID => (string) Configuration::get(self::CONF_CLIENT_ID),
             self::CONF_CLIENT_SECRET => (string) Configuration::get(self::CONF_CLIENT_SECRET),

@@ -152,7 +152,7 @@
     }
 
     function mountRecaptcha() {
-        if (!window.internautenRecaptchaSiteKey || !window.grecaptcha) {
+        if (!window.internautenRecaptchaSiteKey || !window.grecaptcha || typeof window.grecaptcha.render !== 'function') {
             return;
         }
 

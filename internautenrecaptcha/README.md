@@ -73,3 +73,10 @@ Nicht passend fuer dieses Modul:
 - Wenn Absenden trotz Haken fehlschlaegt:
   - Secret key pruefen.
   - Sicherstellen, dass Site key und Secret key vom selben reCAPTCHA-Eintrag stammen.
+
+## Test mit Docker
+
+```bash
+ln -s /internauten/InternautenMix/internautenrecaptcha /var/www/html/modules/internautenrecaptcha
+chown -h www-data:www-data /var/www/html/modules/internautenrecaptcha
+```

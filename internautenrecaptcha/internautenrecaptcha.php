@@ -12,7 +12,7 @@ class InternautenRecaptcha extends Module
     {
         $this->name = 'internautenrecaptcha';
         $this->tab = 'front_office_features';
-        $this->version = '1.1.0';
+        $this->version = '1.2.0';
         $this->author = 'die.internauten.ch GmbH';
         $this->need_instance = 0;
         $this->bootstrap = true;

@@ -2,6 +2,9 @@
 
 PrestaShop-Modul, das den Versand von `Mail::Send()` auf einen externen Versanddienst umleitet.
 
+> [!CAUTION]
+> Dieses Modul wird hier nicht weiter gepflegt. Gehe zu [InternautenGraph](https://github.com/internauten/InternautenGraph)
+
 ## Features
 
 - Nutzt den Hook `actionEmailSendBefore`, um den nativen Versand vor dem Senden abzufangen.

@@ -23,3 +23,7 @@ temp/
 
 # Dependency helpers
 composer.phar
+
+# PrestaShop-generated module config cache
+config.xml
+config_*.xml
